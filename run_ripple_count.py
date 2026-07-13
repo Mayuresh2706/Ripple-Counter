@@ -1,53 +1,74 @@
 import argparse
 import sys
-from ripple_counter import load_data, preprocess_signal, count_zero_crossings, count_peaks, plot_results
+from ripple_counter import (
+    load_data, analyze_frequency, preprocess_signal,
+    count_ripples, count_zero_crossings, plot_results
+)
 
 def main():
     parser = argparse.ArgumentParser(description="Motor Current Ripple Counter")
-    parser.add_argument("filepath", type=str, nargs="?", default="002_DX1H_SLP_WithPWM.xlsx", help="Path to the Excel file containing motor data")
-    parser.add_argument("--sheet", type=str, default="12_PWL_Antipinch", help="Sheet name or index (0-indexed). E.g. 'Sheet1' or '0'")
-    parser.add_argument("--col", type=str, default="apmd_Data.motors[0].input.MotorCurrent", help="Column name for motor current")
-    parser.add_argument("--fs", type=int, default=4000, help="Sampling frequency in Hz (default: 4000)")
-    parser.add_argument("--lowcut", type=float, default=10.0, help="Lowcut freq for removing DC offset (default: 10Hz)")
-    parser.add_argument("--highcut", type=float, default=500.0, help="Highcut freq for removing jagged noise (default: 500Hz)")
-    parser.add_argument("--prominence", type=float, default=0.1, help="Prominence threshold for peak detection")
-    
+    parser.add_argument("filepath", type=str, nargs="?",
+                        default="002_DX1H_SLP_WithPWM.xlsx",
+                        help="Path to the Excel file")
+    parser.add_argument("--sheet", type=str, default="12_PWL_Antipinch",
+                        help="Sheet name or 0-indexed number")
+    parser.add_argument("--col", type=str,
+                        default="apmd_Data.motors[0].input.MotorCurrent",
+                        help="Column name for motor current")
+    parser.add_argument("--fs", type=int, default=4000,
+                        help="Sampling frequency in Hz (default: 4000)")
+    parser.add_argument("--lowcut", type=float, default=None,
+                        help="Manual lowcut freq (Hz). Auto-tuned if omitted.")
+    parser.add_argument("--highcut", type=float, default=None,
+                        help="Manual highcut freq (Hz). Auto-tuned if omitted.")
+    parser.add_argument("--prominence", type=float, default=None,
+                        help="Manual prominence threshold. Auto-tuned if omitted.")
+
     args = parser.parse_args()
-    
+
     # Handle sheet being an int or a string
     try:
         sheet = int(args.sheet)
     except ValueError:
         sheet = args.sheet
-        
+
     try:
         # 1. Load Data
-        time, current = load_data(args.filepath, sheet_name=sheet, current_col=args.col, fs=args.fs)
-        
-        print(f"Data loaded successfully. Length: {len(current)} samples ({len(current)/args.fs:.2f} seconds)")
-        
-        # 2. Preprocess (Remove DC offset and smooth the messy 'up and down')
-        print(f"Applying bandpass filter ({args.lowcut} Hz - {args.highcut} Hz)...")
-        filtered_current = preprocess_signal(current, fs=args.fs, lowcut=args.lowcut, highcut=args.highcut)
-        
-        # 3. Count Ripples (Method 1: Zero-Crossings)
-        zc_ripples, zero_crosses = count_zero_crossings(filtered_current)
-        
-        # 4. Count Ripples (Method 2: Peak-Valley Prominence)
-        # Using a distance of at least 4 samples to prevent double-counting high-frequency noise
-        pk_ripples, peaks = count_peaks(filtered_current, prominence=args.prominence, distance=4)
-        
-        print("\n--- RESULTS ---")
-        print(f"Method 1 (Zero-Crossings) : {zc_ripples} ripples")
-        print(f"Method 2 (Peak Prominence)  : {pk_ripples} ripples")
-        print("----------------")
-        
-        print("\nGenerating plot for visual verification. Close the plot window to exit.")
-        # Plot both peaks and zero crossings on the graph
-        plot_results(time, current, filtered_current, peaks=peaks, zero_crosses=zero_crosses)
-        
+        time, current = load_data(args.filepath, sheet_name=sheet,
+                                  current_col=args.col, fs=args.fs)
+
+        # 2. FFT — Find the dominant ripple frequency
+        dominant_freq, fft_freqs, fft_mag = analyze_frequency(current, fs=args.fs)
+
+        # 3. Preprocess — Auto-tune filter based on dominant frequency
+        filtered = preprocess_signal(current, fs=args.fs,
+                                     lowcut=args.lowcut, highcut=args.highcut,
+                                     dominant_freq=dominant_freq)
+
+        # 4. Count Ripples — Peak detection (auto-tuned)
+        pk_count, peaks = count_ripples(filtered, fs=args.fs,
+                                        dominant_freq=dominant_freq,
+                                        prominence=args.prominence)
+
+        # 5. Count Ripples — Zero-crossing method
+        zc_count, zero_crosses = count_zero_crossings(filtered)
+
+        print(f"\n{'='*40}")
+        print(f"  RESULTS")
+        print(f"{'='*40}")
+        print(f"  Dominant Frequency : {dominant_freq:.1f} Hz")
+        print(f"  Peak Detection     : {pk_count} ripples")
+        print(f"  Zero-Crossing      : {zc_count} ripples")
+        print(f"{'='*40}")
+
+        # 6. Plot
+        plot_results(time, current, filtered, fft_freqs, fft_mag,
+                     peaks=peaks, dominant_freq=dominant_freq)
+
     except Exception as e:
         print(f"\nError: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":
