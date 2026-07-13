@@ -1,8 +1,9 @@
 import argparse
 import sys
 from ripple_counter import (
-    load_data, analyze_frequency, preprocess_signal,
-    count_ripples, count_zero_crossings, plot_results
+    load_data, find_motor_running_segments, analyze_frequency,
+    preprocess_signal, count_ripples_in_segments, count_zero_crossings,
+    plot_results
 )
 
 def main():
@@ -23,10 +24,11 @@ def main():
                         help="Manual highcut freq (Hz). Auto-tuned if omitted.")
     parser.add_argument("--prominence", type=float, default=None,
                         help="Manual prominence threshold. Auto-tuned if omitted.")
+    parser.add_argument("--threshold-pct", type=float, default=10.0,
+                        help="Motor-on threshold as %% of max current (default: 10)")
 
     args = parser.parse_args()
 
-    # Handle sheet being an int or a string
     try:
         sheet = int(args.sheet)
     except ValueError:
@@ -37,33 +39,42 @@ def main():
         time, current = load_data(args.filepath, sheet_name=sheet,
                                   current_col=args.col, fs=args.fs)
 
-        # 2. FFT — Find the dominant ripple frequency
-        dominant_freq, fft_freqs, fft_mag = analyze_frequency(current, fs=args.fs)
+        # 2. Detect motor-running segments (ignore start/stop transients)
+        segments = find_motor_running_segments(current, fs=args.fs,
+                                               threshold_pct=args.threshold_pct)
 
-        # 3. Preprocess — Auto-tune filter based on dominant frequency
+        if not segments:
+            print("\n  ERROR: No motor-running segments found!")
+            print("  Try lowering --threshold-pct (e.g. --threshold-pct 5)")
+            sys.exit(1)
+
+        # 3. FFT on the longest running segment (cleanest frequency estimate)
+        longest_seg = max(segments, key=lambda s: s[1] - s[0])
+        seg_signal = current[longest_seg[0]:longest_seg[1]]
+        dominant_freq, fft_freqs, fft_mag = analyze_frequency(seg_signal, fs=args.fs)
+
+        # 4. Bandpass filter the FULL signal
         filtered = preprocess_signal(current, fs=args.fs,
                                      lowcut=args.lowcut, highcut=args.highcut,
                                      dominant_freq=dominant_freq)
 
-        # 4. Count Ripples — Peak detection (auto-tuned)
-        pk_count, peaks = count_ripples(filtered, fs=args.fs,
-                                        dominant_freq=dominant_freq,
-                                        prominence=args.prominence)
+        # 5. Count ripples ONLY in motor-running segments
+        print(f"\n  Counting ripples in motor-running segments only:")
+        pk_count, peaks = count_ripples_in_segments(
+            filtered, segments, fs=args.fs,
+            dominant_freq=dominant_freq, prominence=args.prominence
+        )
 
-        # 5. Count Ripples — Zero-crossing method
-        zc_count, zero_crosses = count_zero_crossings(filtered)
-
-        print(f"\n{'='*40}")
+        print(f"\n{'='*50}")
         print(f"  RESULTS")
-        print(f"{'='*40}")
+        print(f"{'='*50}")
         print(f"  Dominant Frequency : {dominant_freq:.1f} Hz")
         print(f"  Peak Detection     : {pk_count} ripples")
-        print(f"  Zero-Crossing      : {zc_count} ripples")
-        print(f"{'='*40}")
+        print(f"{'='*50}")
 
         # 6. Plot
         plot_results(time, current, filtered, fft_freqs, fft_mag,
-                     peaks=peaks, dominant_freq=dominant_freq)
+                     peaks=peaks, segments=segments, dominant_freq=dominant_freq)
 
     except Exception as e:
         print(f"\nError: {e}")

@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt, find_peaks
+from scipy.signal import butter, filtfilt, find_peaks, medfilt
 from scipy.fft import rfft, rfftfreq
 import matplotlib.pyplot as plt
 
@@ -35,21 +35,69 @@ def load_data(filepath, sheet_name=0, current_col='I', time_col=None, fs=4000):
     return time, current
 
 
+def find_motor_running_segments(signal, fs=4000, threshold_pct=10.0, min_duration_s=0.1):
+    """
+    Detect segments where the motor is actually running (current is non-trivial).
+    Ignores the start/stop transients by trimming edges of each segment.
+    
+    Args:
+        signal: Raw current signal.
+        threshold_pct: Percentage of max |current| to consider as "motor on".
+        min_duration_s: Minimum segment duration in seconds to consider valid.
+        
+    Returns:
+        List of (start_idx, end_idx) tuples for motor-running segments.
+    """
+    abs_signal = np.abs(signal)
+    threshold = np.max(abs_signal) * (threshold_pct / 100.0)
+    
+    # Boolean mask: True where motor is running
+    running = abs_signal > threshold
+    
+    # Find contiguous segments
+    segments = []
+    in_segment = False
+    start = 0
+    
+    for i in range(len(running)):
+        if running[i] and not in_segment:
+            start = i
+            in_segment = True
+        elif not running[i] and in_segment:
+            end = i
+            in_segment = False
+            # Check minimum duration
+            if (end - start) / fs >= min_duration_s:
+                segments.append((start, end))
+    
+    # Handle segment that runs to end of signal
+    if in_segment and (len(running) - start) / fs >= min_duration_s:
+        segments.append((start, len(running)))
+    
+    # Trim edges of each segment to avoid start/stop transients
+    trim_samples = int(fs * 0.05)  # trim 50ms from each edge
+    trimmed = []
+    for s, e in segments:
+        s_trim = s + trim_samples
+        e_trim = e - trim_samples
+        if e_trim > s_trim + fs * min_duration_s:  # still long enough after trimming
+            trimmed.append((s_trim, e_trim))
+    
+    print(f"\n  Motor-running detection:")
+    print(f"    Threshold: {threshold:.1f} (={threshold_pct}% of max)")
+    print(f"    Found {len(trimmed)} running segment(s):")
+    for i, (s, e) in enumerate(trimmed):
+        dur = (e - s) / fs
+        print(f"      Segment {i+1}: {s/fs:.2f}s - {e/fs:.2f}s ({dur:.2f}s)")
+    
+    return trimmed
+
+
 def analyze_frequency(signal, fs=4000, min_ripple_freq=20.0):
     """
     Use FFT to find the dominant ripple frequency in the signal.
-    
-    Before doing FFT, we high-pass filter to remove the slow baseline
-    envelope (DC drift, motor speed ramp, load changes) which would
-    otherwise dominate the spectrum and mask the actual ripples.
-    
-    Args:
-        min_ripple_freq: Minimum expected ripple frequency in Hz.
-            Motor commutation ripples are typically 20-1000 Hz.
-            Anything below this is baseline drift, not a ripple.
+    High-pass filters first to remove slow baseline drift.
     """
-    # Step 1: High-pass filter to remove the slow baseline before FFT
-    # This prevents the large low-freq envelope from dominating the spectrum
     nyq = 0.5 * fs
     hp_cutoff = min_ripple_freq / nyq
     hp_cutoff = max(hp_cutoff, 0.001)
@@ -61,7 +109,6 @@ def analyze_frequency(signal, fs=4000, min_ripple_freq=20.0):
     yf = np.abs(rfft(signal_hp))
     xf = rfftfreq(N, 1.0 / fs)
 
-    # Search only above min_ripple_freq
     min_freq_idx = np.searchsorted(xf, min_ripple_freq)
     max_freq_idx = np.searchsorted(xf, fs / 2 * 0.9)
 
@@ -77,7 +124,6 @@ def analyze_frequency(signal, fs=4000, min_ripple_freq=20.0):
     print(f"\n  FFT Analysis (searching above {min_ripple_freq} Hz):")
     print(f"    Dominant ripple frequency: {dominant_freq:.1f} Hz")
 
-    # Show top 5 spectral peaks
     spectrum_peaks, _ = find_peaks(yf[min_freq_idx:max_freq_idx], prominence=np.max(search_mag) * 0.1)
     if len(spectrum_peaks) > 0:
         peak_freqs = search_freq[spectrum_peaks]
@@ -93,17 +139,14 @@ def analyze_frequency(signal, fs=4000, min_ripple_freq=20.0):
 def preprocess_signal(signal, fs=4000, lowcut=None, highcut=None, dominant_freq=None, order=4):
     """
     Apply a zero-phase bandpass Butterworth filter.
-    If lowcut/highcut are not provided, auto-tune them based on the dominant frequency.
+    Auto-tunes based on dominant frequency if not manually set.
     """
     if dominant_freq and dominant_freq > 0:
         if lowcut is None:
-            # High-pass at half the dominant freq to remove DC drift
             lowcut = max(1.0, dominant_freq * 0.3)
         if highcut is None:
-            # Low-pass at 3x the dominant freq to keep harmonics but remove noise
             highcut = min(dominant_freq * 3.0, fs * 0.45)
     else:
-        # Fallback defaults
         if lowcut is None:
             lowcut = 10.0
         if highcut is None:
@@ -112,8 +155,6 @@ def preprocess_signal(signal, fs=4000, lowcut=None, highcut=None, dominant_freq=
     nyq = 0.5 * fs
     low = lowcut / nyq
     high = highcut / nyq
-
-    # Clamp to valid range
     low = max(low, 0.001)
     high = min(high, 0.999)
 
@@ -130,49 +171,64 @@ def preprocess_signal(signal, fs=4000, lowcut=None, highcut=None, dominant_freq=
     return filtered_signal
 
 
-def count_ripples(signal, fs=4000, dominant_freq=None, prominence=None):
+def count_ripples_in_segments(filtered_signal, segments, fs=4000, dominant_freq=None, prominence=None):
     """
-    Count ripples using peak detection with auto-tuned parameters.
-    A ripple = one up and one down = one peak.
+    Count ripples ONLY within motor-running segments, ignoring transients.
     """
     if dominant_freq and dominant_freq > 0:
-        # Minimum distance between peaks: ~80% of one period
         min_distance = int(fs / dominant_freq * 0.6)
         min_distance = max(min_distance, 2)
     else:
         min_distance = 4
 
-    if prominence is None:
-        # Auto-set prominence as a fraction of the signal's standard deviation
-        std = np.std(signal)
-        prominence = std * 0.3
-        print(f"  Auto-prominence: {prominence:.4f} (signal std={std:.4f})")
-
+    total_peaks = []
+    
+    for i, (seg_start, seg_end) in enumerate(segments):
+        seg_signal = filtered_signal[seg_start:seg_end]
+        
+        if prominence is None:
+            # Auto-set prominence per segment based on that segment's noise level
+            seg_std = np.std(seg_signal)
+            seg_prominence = seg_std * 0.3
+        else:
+            seg_prominence = prominence
+        
+        peaks, _ = find_peaks(seg_signal, prominence=seg_prominence, distance=min_distance)
+        
+        # Convert local segment indices to global indices
+        global_peaks = peaks + seg_start
+        total_peaks.extend(global_peaks.tolist())
+        
+        print(f"    Segment {i+1}: {len(peaks)} ripples (prominence={seg_prominence:.4f})")
+    
+    all_peaks = np.array(total_peaks, dtype=int)
+    print(f"  Total ripples across all segments: {len(all_peaks)}")
     print(f"  Min peak distance: {min_distance} samples ({fs/max(min_distance,1):.0f} Hz max)")
-
-    peaks, properties = find_peaks(signal, prominence=prominence, distance=min_distance)
-    return len(peaks), peaks
+    
+    return len(all_peaks), all_peaks
 
 
 def count_zero_crossings(signal):
-    """
-    Count zero crossings. Ripples = crossings / 2.
-    """
+    """Count zero crossings. Ripples = crossings / 2."""
     zero_crosses = np.where(np.diff(np.sign(signal)))[0]
     ripple_count = len(zero_crosses) // 2
     return ripple_count, zero_crosses
 
 
 def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
-                 peaks=None, dominant_freq=None,
+                 peaks=None, segments=None, dominant_freq=None,
                  title="Motor Current Ripple Analysis"):
     """
-    3-panel diagnostic plot: Raw signal, FFT spectrum, Filtered + detected peaks.
+    3-panel diagnostic plot with motor-running segments highlighted.
     """
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10))
 
-    # --- Panel 1: Raw Signal ---
+    # --- Panel 1: Raw Signal with segments highlighted ---
     ax1.plot(time, raw_signal, color='gray', linewidth=0.5, alpha=0.8)
+    if segments:
+        for i, (s, e) in enumerate(segments):
+            ax1.axvspan(time[s], time[min(e-1, len(time)-1)], alpha=0.15, color='green',
+                        label='Motor Running' if i == 0 else None)
     ax1.axhline(np.mean(raw_signal), color='red', linestyle='--', linewidth=1,
                 label=f'DC Mean = {np.mean(raw_signal):.2f}')
     ax1.set_title(f"{title} — Raw Signal")
@@ -192,8 +248,18 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
     ax2.grid(True, alpha=0.3)
     ax2.legend()
 
-    # --- Panel 3: Filtered Signal + Peaks ---
-    ax3.plot(time, filtered_signal, color='blue', linewidth=0.5, label='Filtered (DC removed)')
+    # --- Panel 3: Filtered Signal + Peaks (only in segments) ---
+    ax3.plot(time, filtered_signal, color='blue', linewidth=0.5, alpha=0.4, label='Filtered (all)')
+    
+    # Highlight the segments being analyzed
+    if segments:
+        for i, (s, e) in enumerate(segments):
+            seg_time = time[s:e]
+            seg_filtered = filtered_signal[s:e]
+            ax3.plot(seg_time, seg_filtered, color='blue', linewidth=0.8,
+                     label='Analyzed Region' if i == 0 else None)
+            ax3.axvspan(time[s], time[min(e-1, len(time)-1)], alpha=0.08, color='green')
+    
     if peaks is not None and len(peaks) > 0:
         ax3.plot(time[peaks], filtered_signal[peaks], "v", color='red',
                  markersize=6, label=f'Detected Peaks (n={len(peaks)})')
