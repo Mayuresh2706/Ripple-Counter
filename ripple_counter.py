@@ -261,7 +261,7 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
             ax3.axvspan(time[s], time[min(e-1, len(time)-1)], alpha=0.08, color='green')
     
     if peaks is not None and len(peaks) > 0:
-        ax3.plot(time[peaks], filtered_signal[peaks], "v", color='red',
+        ax3.plot(time[peaks], filtered_signal[peaks], "x", color='red',
                  markersize=6, label=f'Detected Peaks (n={len(peaks)})')
     ax3.axhline(0, color='black', linewidth=0.5, linestyle='--')
     ax3.set_title(f"Filtered Signal — Detected Ripples: {len(peaks) if peaks is not None else 0}")
