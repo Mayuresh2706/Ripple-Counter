@@ -13,6 +13,41 @@ python run_ripple_count.py
 
 ---
 
+## The Method: How We Count Ripples (In Detail)
+
+Motor current contains a lot of information, but it is extremely noisy. Our algorithm extracts the actual commutation ripples using a robust, multi-stage Digital Signal Processing (DSP) pipeline that automatically adapts to the specific motor being tested.
+
+Here is the exact step-by-step breakdown of how the software works:
+
+### 1. Data Loading & Cleaning
+When pulling raw data from Excel, motor data exports often contain header rows or string metadata. The script uses pandas `skiprows` to jump past the metadata block (rows 1-5), grabs the specified column, and forcefully drops any remaining non-numeric text (`errors='coerce'`) to guarantee a purely numeric array.
+
+### 2. Fast Fourier Transform (FFT) Auto-Tuning
+A major issue with generic ripple counters is that they use hardcoded filter frequencies. Since motor speed (and thus ripple frequency) varies by motor, we auto-tune the filter:
+* **High-Pass Pre-filtering (20 Hz):** Before running the FFT, we apply a strict 20 Hz high-pass filter. Motor current has massive low-frequency components (like the slow baseline drift and the huge 0 Hz DC offset). If we don't remove these first, the FFT will falsely identify the baseline drift (~5-10 Hz) as the dominant frequency.
+* **Spectrum Analysis:** We run an FFT on this cleaned signal, searching only above 20 Hz to find the true **dominant ripple frequency** (the speed at which the motor's commutator is spinning).
+
+### 3. Adaptive Bandpass Filtering
+Once we know the dominant ripple frequency, we design a 4th-order Butterworth bandpass filter tailored *specifically* to that frequency.
+* **Low-cut:** Set at 30% of the dominant frequency. This cleanly strips away the slow DC envelope and baseline wander.
+* **High-cut:** Set at 300% of the dominant frequency. This keeps the primary ripple and its early harmonics (so the ripple shape isn't distorted) but aggressively destroys high-frequency electrical noise (like PWM switching noise).
+* **Zero-Phase Filtering (`filtfilt`):** We pass the signal through the filter forward and backward. This ensures that the peaks do not get shifted in time, which is critical for accurate counting.
+
+### 4. Robust Peak Detection (MAD Thresholding)
+The motor starts and stops with massive current spikes (transients) that can be orders of magnitude larger than a normal commutation ripple.
+* **Median Absolute Deviation (MAD):** If we set a simple threshold, the start/stop spikes would skew the average so much that normal ripples would be ignored. Instead, we calculate the MAD—a highly robust statistical measure of the "noise floor" of the actual ripples that is entirely immune to extreme outliers (the spikes).
+* **Prominence-Based Detection:** We run `scipy.signal.find_peaks` requiring each peak to have a prominence (height relative to its neighboring valleys) of at least 2.5× the MAD. This perfectly isolates real ripples while ignoring electrical "fuzz".
+* **Minimum Distance Enforcement:** We strictly enforce that two peaks cannot occur closer than 60% of the expected ripple period (calculated from our FFT dominant frequency). This absolutely prevents a single jagged, noisy ripple from being double-counted as two ripples.
+
+### 5. Four-Panel Diagnostic Plot
+Because the algorithm operates on the whole signal simultaneously, visual verification is crucial. The script outputs a 4-panel plot:
+1. **Raw Signal:** The original, messy current.
+2. **FFT Spectrum:** Shows exactly what frequency the auto-tuner locked onto.
+3. **Filtered Signal (Full):** The whole signal with the DC offset removed and all detected peaks marked with dots.
+4. **Zoomed View:** Automatically zooms in on a 0.5-second window in the exact center of the recording, drawing clear red circles over the peaks so you can physically verify that the algorithm is correctly locking onto individual ripples.
+
+---
+
 ## Why Signal Processing and Not Machine Learning?
 
 ### The Simple Explanation
@@ -78,18 +113,8 @@ Our Python script does **exactly the same thing** as all four references above, 
 |---|---|
 | Current sense amplifier (INA240/INA181) | `pd.read_excel()` — data already captured |
 | Active bandpass filter (Op-Amp circuit) | `scipy.signal.butter()` + `filtfilt()` |
-| Comparator with hysteresis | `scipy.signal.find_peaks(prominence=...)` |
+| Comparator with hysteresis | `scipy.signal.find_peaks(prominence=...)` (MAD tuned) |
 | MCU pulse counter | `len(peaks)` |
-
----
-
-## How It Works
-
-1. **Load** your Excel data
-2. **FFT** — Automatically finds the dominant ripple frequency in your signal
-3. **Bandpass Filter** — Auto-tunes around the detected frequency to remove DC offset and high-frequency noise
-4. **Peak Detection** — Counts peaks with prominence-based thresholding (equivalent to hardware hysteresis)
-5. **Plot** — 3-panel diagnostic: raw signal, frequency spectrum, filtered signal with marked peaks
 
 ## Usage
 
