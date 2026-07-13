@@ -20,10 +20,11 @@ def load_data(filepath, sheet_name=0, current_col='I', time_col=None, fs=4000):
     print(f"Loading data from '{filepath}' (Sheet: {sheet_name})...")
     df = pd.read_excel(filepath, sheet_name=sheet_name)
     
-    if current_col not in df.columns:
-        raise ValueError(f"Column '{current_col}' not found in sheet. Available columns: {list(df.columns)}")
-        
-    current = df[current_col].values
+    # Force conversion to numeric, turning any text/errors into NaN
+    current = pd.to_numeric(df[current_col], errors='coerce')
+    
+    # Fill any NaNs (like text headers) with 0 or interpolate them
+    current = current.fillna(0).values
     
     if time_col and time_col in df.columns:
         time = df[time_col].values
