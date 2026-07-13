@@ -35,21 +35,34 @@ def load_data(filepath, sheet_name=0, current_col='I', time_col=None, fs=4000):
     return time, current
 
 
-def analyze_frequency(signal, fs=4000):
+def analyze_frequency(signal, fs=4000, min_ripple_freq=20.0):
     """
     Use FFT to find the dominant ripple frequency in the signal.
-    Returns (dominant_freq_hz, fft_freqs, fft_magnitude).
+    
+    Before doing FFT, we high-pass filter to remove the slow baseline
+    envelope (DC drift, motor speed ramp, load changes) which would
+    otherwise dominate the spectrum and mask the actual ripples.
+    
+    Args:
+        min_ripple_freq: Minimum expected ripple frequency in Hz.
+            Motor commutation ripples are typically 20-1000 Hz.
+            Anything below this is baseline drift, not a ripple.
     """
-    # Remove DC component before FFT
-    signal_centered = signal - np.mean(signal)
+    # Step 1: High-pass filter to remove the slow baseline before FFT
+    # This prevents the large low-freq envelope from dominating the spectrum
+    nyq = 0.5 * fs
+    hp_cutoff = min_ripple_freq / nyq
+    hp_cutoff = max(hp_cutoff, 0.001)
+    hp_cutoff = min(hp_cutoff, 0.999)
+    b_hp, a_hp = butter(4, hp_cutoff, btype='high')
+    signal_hp = filtfilt(b_hp, a_hp, signal)
 
-    N = len(signal_centered)
-    yf = np.abs(rfft(signal_centered))
+    N = len(signal_hp)
+    yf = np.abs(rfft(signal_hp))
     xf = rfftfreq(N, 1.0 / fs)
 
-    # Ignore DC bin (index 0) and very low frequencies (< 5 Hz)
-    min_freq_idx = np.searchsorted(xf, 5.0)
-    # Also ignore frequencies above Nyquist/2 to avoid aliasing artifacts
+    # Search only above min_ripple_freq
+    min_freq_idx = np.searchsorted(xf, min_ripple_freq)
     max_freq_idx = np.searchsorted(xf, fs / 2 * 0.9)
 
     search_mag = yf[min_freq_idx:max_freq_idx]
@@ -61,10 +74,10 @@ def analyze_frequency(signal, fs=4000):
     dominant_idx = np.argmax(search_mag) + min_freq_idx
     dominant_freq = xf[dominant_idx]
 
-    print(f"\n  FFT Analysis:")
+    print(f"\n  FFT Analysis (searching above {min_ripple_freq} Hz):")
     print(f"    Dominant ripple frequency: {dominant_freq:.1f} Hz")
 
-    # Also show top 5 peaks in the spectrum
+    # Show top 5 spectral peaks
     spectrum_peaks, _ = find_peaks(yf[min_freq_idx:max_freq_idx], prominence=np.max(search_mag) * 0.1)
     if len(spectrum_peaks) > 0:
         peak_freqs = search_freq[spectrum_peaks]
