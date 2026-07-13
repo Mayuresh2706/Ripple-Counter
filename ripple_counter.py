@@ -9,7 +9,8 @@ def load_data(filepath, sheet_name=0, current_col='I', time_col=None, fs=4000):
     Load data from an Excel file.
     """
     print(f"Loading data from '{filepath}' (Sheet: {sheet_name})...")
-    df = pd.read_excel(filepath, sheet_name=sheet_name)
+    # Row 0 = column names (header), rows 1-5 = metadata → skip them
+    df = pd.read_excel(filepath, sheet_name=sheet_name, skiprows=[1, 2, 3, 4, 5])
 
     if current_col not in df.columns:
         print(f"Column '{current_col}' not found. Available columns:")
