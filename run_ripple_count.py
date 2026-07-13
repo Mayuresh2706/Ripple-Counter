@@ -4,9 +4,9 @@ from ripple_counter import load_data, preprocess_signal, count_zero_crossings, c
 
 def main():
     parser = argparse.ArgumentParser(description="Motor Current Ripple Counter")
-    parser.add_argument("filepath", type=str, help="Path to the Excel file containing motor data")
-    parser.add_argument("--sheet", type=str, default="0", help="Sheet name or index (0-indexed). E.g. 'Sheet1' or '0'")
-    parser.add_argument("--col", type=str, default="I", help="Column name for motor current (default: 'I')")
+    parser.add_argument("filepath", type=str, nargs="?", default="002_DX1H_SLP_WithPWM.xlsx", help="Path to the Excel file containing motor data")
+    parser.add_argument("--sheet", type=str, default="12_PWL_Antipinch", help="Sheet name or index (0-indexed). E.g. 'Sheet1' or '0'")
+    parser.add_argument("--col", type=str, default="apmd_Data.motors[0].input.MotorCurrent", help="Column name for motor current")
     parser.add_argument("--fs", type=int, default=4000, help="Sampling frequency in Hz (default: 4000)")
     parser.add_argument("--lowcut", type=float, default=10.0, help="Lowcut freq for removing DC offset (default: 10Hz)")
     parser.add_argument("--highcut", type=float, default=500.0, help="Highcut freq for removing jagged noise (default: 500Hz)")
