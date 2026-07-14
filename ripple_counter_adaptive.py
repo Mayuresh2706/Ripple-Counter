@@ -154,6 +154,7 @@ def count_ripples_adaptive(filtered_signal, fs=4000, dominant_freq=None,
     else:
         min_distance = 4
     min_distance = max(min_distance, 2)
+    print(f"  [Debug] min_distance set to: {min_distance} samples")
 
     # 3. Find ALL candidate peaks and troughs (with a very low global prominence)
     global_floor = np.percentile(np.abs(filtered_signal), 10) * 0.1
@@ -199,46 +200,51 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
                  peaks=None, troughs=None, ripple_count=0, dominant_freq=None,
                  envelope=None, adaptive_thresh=None,
                  title="Motor Current Ripple Analysis (Adaptive Envelope Method)"):
-    """Single plot: Filtered signal with adaptive threshold and markers."""
-    fig, ax = plt.subplots(figsize=(14, 6))
-
-    ax.plot(time, filtered_signal, color='blue', linewidth=0.8, label="Filtered Signal")
+    """4-panel plot zooming in on 4 separate time chunks."""
+    total_time = time[-1] - time[0]
+    quarter = total_time / 4.0
     
-    if envelope is not None:
-        ax.plot(time, envelope, color='orange', linewidth=0.5,
-                label='Hilbert Envelope', alpha=0.5)
+    fig, axes = plt.subplots(4, 1, figsize=(16, 14))
     
-    if adaptive_thresh is not None:
-        ax.plot(time, adaptive_thresh, color='red', linewidth=1.5,
-                linestyle='--', label='Local Threshold (+)', alpha=0.8)
-        ax.plot(time, -adaptive_thresh, color='red', linewidth=1.5,
-                linestyle='--', label='Local Threshold (-)', alpha=0.8)
-
-    num_peaks = len(peaks) if peaks is not None else 0
-    num_troughs = len(troughs) if troughs is not None else 0
-
-    if peaks is not None and len(peaks) > 0:
-        ax.plot(time[peaks], filtered_signal[peaks], "v",
-                color='red', markersize=6, alpha=0.9,
-                label=f'Peaks ({num_peaks})')
-    if troughs is not None and len(troughs) > 0:
-        ax.plot(time[troughs], filtered_signal[troughs], "^",
-                color='green', markersize=6, alpha=0.9,
-                label=f'Troughs ({num_troughs})')
+    for i in range(4):
+        ax = axes[i]
+        start_t = time[0] + i * quarter
+        end_t = time[0] + (i + 1) * quarter
         
-    ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
-    ax.set_title(f"{title} | Ripples: {ripple_count}")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Current")
-    
-    # Optional: you can uncomment these lines to zoom in on a specific section
-    # mid_idx = len(time) // 2
-    # samples_in_sec = int(fs) if 'fs' in locals() else 4000
-    # ax.set_xlim(time[mid_idx - samples_in_sec], time[mid_idx + samples_in_sec])
-    
-    ax.legend(loc='upper right', fontsize=10)
-    ax.grid(True, alpha=0.3)
+        mask = (time >= start_t) & (time <= end_t)
+        
+        ax.plot(time[mask], filtered_signal[mask], color='blue', linewidth=1.0, label="Filtered Signal")
+        
+        if envelope is not None:
+            ax.plot(time[mask], envelope[mask], color='orange', linewidth=0.8,
+                    label='Hilbert Envelope', alpha=0.5)
+        
+        if adaptive_thresh is not None:
+            ax.plot(time[mask], adaptive_thresh[mask], color='red', linewidth=1.5,
+                    linestyle='--', label='Local Threshold (+)', alpha=0.8)
+            ax.plot(time[mask], -adaptive_thresh[mask], color='red', linewidth=1.5,
+                    linestyle='--', alpha=0.8)
+
+        if peaks is not None and len(peaks) > 0:
+            zoom_peaks = peaks[(time[peaks] >= start_t) & (time[peaks] <= end_t)]
+            ax.plot(time[zoom_peaks], filtered_signal[zoom_peaks], "v",
+                    color='red', markersize=7, alpha=0.9, label='Peaks' if i==0 else "")
+            
+        if troughs is not None and len(troughs) > 0:
+            zoom_troughs = troughs[(time[troughs] >= start_t) & (time[troughs] <= end_t)]
+            ax.plot(time[zoom_troughs], filtered_signal[zoom_troughs], "^",
+                    color='green', markersize=7, alpha=0.9, label='Troughs' if i==0 else "")
+            
+        ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
+        ax.set_xlim(start_t, end_t)
+        ax.set_ylabel("Current")
+        ax.grid(True, alpha=0.4)
+        
+        if i == 0:
+            ax.set_title(f"{title} | Total Ripples: {ripple_count}")
+            ax.legend(loc='upper right', fontsize=10)
+        if i == 3:
+            ax.set_xlabel("Time (s)")
 
     plt.tight_layout()
     plt.savefig("ripple_analysis_adaptive.png", dpi=200, bbox_inches='tight')
-    # plt.show()

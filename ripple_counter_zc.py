@@ -76,6 +76,7 @@ def count_ripples_hybrid(filtered_signal, fs=4000, dominant_freq=None, prominenc
     else:
         min_distance = 4
     min_distance = max(min_distance, 2)
+    print(f"  [Debug] min_distance set to: {min_distance} samples")
 
     # Use MAD for robust prominence (immune to start/stop spikes)
     if prominence is None:
@@ -115,65 +116,41 @@ def count_ripples_hybrid(filtered_signal, fs=4000, dominant_freq=None, prominenc
 def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
                  peaks=None, troughs=None, ripple_count=0, dominant_freq=None,
                  title="Motor Current Ripple Analysis (Hybrid Peak+Trough Method)"):
-    """4-panel plot: Raw, FFT, Filtered (Full) with peaks & troughs, Filtered (Zoomed)."""
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(14, 12))
+    """4-panel plot zooming in on 4 separate time chunks."""
+    total_time = time[-1] - time[0]
+    quarter = total_time / 4.0
+    
+    fig, axes = plt.subplots(4, 1, figsize=(16, 14))
+    
+    for i in range(4):
+        ax = axes[i]
+        start_t = time[0] + i * quarter
+        end_t = time[0] + (i + 1) * quarter
+        
+        mask = (time >= start_t) & (time <= end_t)
+        
+        ax.plot(time[mask], filtered_signal[mask], color='blue', linewidth=1.0, label="Filtered Signal")
+        
+        if peaks is not None and len(peaks) > 0:
+            zoom_peaks = peaks[(time[peaks] >= start_t) & (time[peaks] <= end_t)]
+            ax.plot(time[zoom_peaks], filtered_signal[zoom_peaks], "v",
+                    color='red', markersize=7, alpha=0.9, label='Peaks' if i==0 else "")
+            
+        if troughs is not None and len(troughs) > 0:
+            zoom_troughs = troughs[(time[troughs] >= start_t) & (time[troughs] <= end_t)]
+            ax.plot(time[zoom_troughs], filtered_signal[zoom_troughs], "^",
+                    color='green', markersize=7, alpha=0.9, label='Troughs' if i==0 else "")
+            
+        ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
+        ax.set_xlim(start_t, end_t)
+        ax.set_ylabel("Current")
+        ax.grid(True, alpha=0.4)
+        
+        if i == 0:
+            ax.set_title(f"{title} | Total Ripples: {ripple_count}")
+            ax.legend(loc='upper right', fontsize=10)
+        if i == 3:
+            ax.set_xlabel("Time (s)")
 
-    # Panel 1: Raw Signal
-    ax1.plot(time, raw_signal, color='gray', linewidth=0.5)
-    ax1.set_title("Raw Signal")
-    ax1.set_ylabel("Current")
-    ax1.grid(True, alpha=0.3)
-
-    # Panel 2: FFT
-    ax2.plot(fft_freqs, fft_mag, color='purple', linewidth=0.8)
-    if dominant_freq:
-        ax2.axvline(dominant_freq, color='red', linestyle='--', label=f'{dominant_freq:.1f} Hz')
-    ax2.set_title("Frequency Spectrum (FFT)")
-    ax2.set_xlim(0, 1500)
-    ax2.set_ylabel("Magnitude")
-    ax2.grid(True, alpha=0.3)
-    ax2.legend()
-
-    # Panel 3: Filtered Signal (Full) with peak and trough markers
-    num_peaks = len(peaks) if peaks is not None else 0
-    num_troughs = len(troughs) if troughs is not None else 0
-    ax3.plot(time, filtered_signal, color='blue', linewidth=0.5)
-    if peaks is not None and len(peaks) > 0:
-        ax3.plot(time[peaks], filtered_signal[peaks], "v",
-                 color='red', markersize=4, alpha=0.7, label=f'Peaks ({num_peaks})')
-    if troughs is not None and len(troughs) > 0:
-        ax3.plot(time[troughs], filtered_signal[troughs], "^",
-                 color='green', markersize=4, alpha=0.7, label=f'Troughs ({num_troughs})')
-    ax3.axhline(0, color='black', linewidth=0.8, linestyle='--')
-    ax3.set_title(f"Filtered Signal — Peaks: {num_peaks}  |  Troughs: {num_troughs}  |  Ripples: {ripple_count}")
-    ax3.set_ylabel("Filtered Current")
-    ax3.legend(loc='upper right', fontsize=8)
-    ax3.grid(True, alpha=0.3)
-
-    # Panel 4: Zoomed-in View (0.5 seconds from the middle of the signal)
-    mid_idx = len(time) // 2
-    samples_in_half_sec = int((0.5 / (time[-1] - time[0])) * len(time))
-    start_idx = max(0, mid_idx - samples_in_half_sec // 2)
-    end_idx = min(len(time), start_idx + samples_in_half_sec)
-
-    ax4.plot(time[start_idx:end_idx], filtered_signal[start_idx:end_idx],
-             color='blue', linewidth=1)
-    if peaks is not None and len(peaks) > 0:
-        zoom_peaks = peaks[(peaks >= start_idx) & (peaks < end_idx)]
-        ax4.plot(time[zoom_peaks], filtered_signal[zoom_peaks], "v",
-                 color='red', markersize=8, label='Peaks')
-    if troughs is not None and len(troughs) > 0:
-        zoom_troughs = troughs[(troughs >= start_idx) & (troughs < end_idx)]
-        ax4.plot(time[zoom_troughs], filtered_signal[zoom_troughs], "^",
-                 color='green', markersize=8, label='Troughs')
-    ax4.axhline(0, color='black', linewidth=0.8, linestyle='--')
-    ax4.set_title("Zoomed View (0.5s window) — Red ▼ = peaks, Green ▲ = troughs")
-    ax4.set_xlabel("Time (s)")
-    ax4.set_ylabel("Filtered Current")
-    ax4.legend(loc='upper right', fontsize=8)
-    ax4.grid(True, alpha=0.3)
-
-    plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)
     plt.tight_layout()
     plt.savefig("ripple_analysis_zc.png", dpi=200, bbox_inches='tight')
-    # plt.show()
