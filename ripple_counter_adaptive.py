@@ -34,12 +34,54 @@ def load_data(filepath, sheet_name=0, current_col='I', time_col=None, fs=4000):
     return time, current
 
 
+# ── Segment Steady State ─────────────────────────────────────────────
+def segment_steady_state(signal, fs=4000):
+    """Finds the longest steady-state motor run, trimming start/stop transients."""
+    window = int(fs * 0.1)  # 100ms
+    kernel = np.ones(window) / window
+    energy = np.convolve(np.abs(signal), kernel, mode='same')
+    
+    threshold = np.max(energy) * 0.1
+    is_on = energy > threshold
+    
+    diff = np.diff(is_on.astype(int))
+    starts = np.where(diff == 1)[0]
+    ends = np.where(diff == -1)[0]
+    
+    if len(is_on) > 0 and is_on[0]:
+        starts = np.insert(starts, 0, 0)
+    if len(is_on) > 0 and is_on[-1]:
+        ends = np.append(ends, len(signal) - 1)
+        
+    if len(starts) == 0:
+        return signal  # Fallback
+        
+    lengths = ends - starts
+    longest_idx = np.argmax(lengths)
+    best_start = starts[longest_idx]
+    best_end = ends[longest_idx]
+    
+    trim_samples = int(fs * 0.5)  # Trim 0.5s from both ends
+    if best_end - best_start > 2 * trim_samples:
+        return signal[best_start + trim_samples : best_end - trim_samples]
+    else:
+        # If too short to trim 0.5s, just take the middle half
+        mid = (best_start + best_end) // 2
+        half_len = (best_end - best_start) // 4
+        return signal[mid - half_len : mid + half_len]
+
 # ── FFT Frequency Analysis ───────────────────────────────────────────
 def analyze_frequency(signal, fs=4000, min_ripple_freq=20.0):
+    # Segment out the start-up and wind-down transients first!
+    signal_core = segment_steady_state(signal, fs)
+    
+    if len(signal_core) < 50: # safety check
+        signal_core = signal
+        
     nyq = 0.5 * fs
     hp_cutoff = min_ripple_freq / nyq
     b_hp, a_hp = butter(4, hp_cutoff, btype='high')
-    signal_hp = filtfilt(b_hp, a_hp, signal)
+    signal_hp = filtfilt(b_hp, a_hp, signal_core)
 
     N = len(signal_hp)
     yf = np.abs(rfft(signal_hp))
