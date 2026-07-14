@@ -150,7 +150,7 @@ def count_ripples_adaptive(filtered_signal, fs=4000, dominant_freq=None,
 
     # 2. Enforce minimum distance between detections
     if dominant_freq and dominant_freq > 0:
-        min_distance = int(fs / dominant_freq * 0.6)
+        min_distance = int(fs / dominant_freq * 0.4)
     else:
         min_distance = 4
     min_distance = max(min_distance, 2)
@@ -199,94 +199,46 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
                  peaks=None, troughs=None, ripple_count=0, dominant_freq=None,
                  envelope=None, adaptive_thresh=None,
                  title="Motor Current Ripple Analysis (Adaptive Envelope Method)"):
-    """5-panel plot: Raw, FFT, Envelope+Threshold, Filtered (Full), Filtered (Zoomed)."""
-    n_panels = 5 if envelope is not None else 4
-    fig, axes = plt.subplots(n_panels, 1, figsize=(14, 3 * n_panels))
+    """Single plot: Filtered signal with adaptive threshold and markers."""
+    fig, ax = plt.subplots(figsize=(14, 6))
 
-    ax_idx = 0
-
-    # Panel 1: Raw Signal
-    axes[ax_idx].plot(time, raw_signal, color='gray', linewidth=0.5)
-    axes[ax_idx].set_title("Raw Signal")
-    axes[ax_idx].set_ylabel("Current")
-    axes[ax_idx].grid(True, alpha=0.3)
-    ax_idx += 1
-
-    # Panel 2: FFT
-    axes[ax_idx].plot(fft_freqs, fft_mag, color='purple', linewidth=0.8)
-    if dominant_freq:
-        axes[ax_idx].axvline(dominant_freq, color='red', linestyle='--',
-                              label=f'{dominant_freq:.1f} Hz')
-    axes[ax_idx].set_title("Frequency Spectrum (FFT)")
-    axes[ax_idx].set_xlim(0, 1500)
-    axes[ax_idx].set_ylabel("Magnitude")
-    axes[ax_idx].grid(True, alpha=0.3)
-    axes[ax_idx].legend()
-    ax_idx += 1
-
-    # Panel 3: Envelope + Adaptive Threshold
+    ax.plot(time, filtered_signal, color='blue', linewidth=0.8, label="Filtered Signal")
+    
     if envelope is not None:
-        axes[ax_idx].plot(time, envelope, color='orange', linewidth=0.5,
-                          label='Hilbert Envelope', alpha=0.8)
-        if adaptive_thresh is not None:
-            axes[ax_idx].plot(time, adaptive_thresh, color='red', linewidth=1.2,
-                              linestyle='--', label='Adaptive Threshold', alpha=0.9)
-        axes[ax_idx].set_title("Hilbert Envelope vs. Adaptive Threshold")
-        axes[ax_idx].set_ylabel("Amplitude")
-        axes[ax_idx].legend(loc='upper right', fontsize=8)
-        axes[ax_idx].grid(True, alpha=0.3)
-        ax_idx += 1
+        ax.plot(time, envelope, color='orange', linewidth=0.5,
+                label='Hilbert Envelope', alpha=0.5)
+    
+    if adaptive_thresh is not None:
+        ax.plot(time, adaptive_thresh, color='red', linewidth=1.5,
+                linestyle='--', label='Local Threshold (+)', alpha=0.8)
+        ax.plot(time, -adaptive_thresh, color='red', linewidth=1.5,
+                linestyle='--', label='Local Threshold (-)', alpha=0.8)
 
-    # Panel 4: Filtered Signal (Full) with peak and trough markers
     num_peaks = len(peaks) if peaks is not None else 0
     num_troughs = len(troughs) if troughs is not None else 0
-    axes[ax_idx].plot(time, filtered_signal, color='blue', linewidth=0.5)
+
     if peaks is not None and len(peaks) > 0:
-        axes[ax_idx].plot(time[peaks], filtered_signal[peaks], "v",
-                          color='red', markersize=4, alpha=0.7,
-                          label=f'Peaks ({num_peaks})')
+        ax.plot(time[peaks], filtered_signal[peaks], "v",
+                color='red', markersize=6, alpha=0.9,
+                label=f'Peaks ({num_peaks})')
     if troughs is not None and len(troughs) > 0:
-        axes[ax_idx].plot(time[troughs], filtered_signal[troughs], "^",
-                          color='green', markersize=4, alpha=0.7,
-                          label=f'Troughs ({num_troughs})')
-    axes[ax_idx].axhline(0, color='black', linewidth=0.8, linestyle='--')
-    axes[ax_idx].set_title(
-        f"Filtered Signal — Peaks: {num_peaks}  |  Troughs: {num_troughs}  |  Ripples: {ripple_count}")
-    axes[ax_idx].set_ylabel("Filtered Current")
-    axes[ax_idx].legend(loc='upper right', fontsize=8)
-    axes[ax_idx].grid(True, alpha=0.3)
-    ax_idx += 1
+        ax.plot(time[troughs], filtered_signal[troughs], "^",
+                color='green', markersize=6, alpha=0.9,
+                label=f'Troughs ({num_troughs})')
+        
+    ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
+    ax.set_title(f"{title} | Ripples: {ripple_count}")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Current")
+    
+    # Optional: you can uncomment these lines to zoom in on a specific section
+    # mid_idx = len(time) // 2
+    # samples_in_sec = int(fs) if 'fs' in locals() else 4000
+    # ax.set_xlim(time[mid_idx - samples_in_sec], time[mid_idx + samples_in_sec])
+    
+    ax.legend(loc='upper right', fontsize=10)
+    ax.grid(True, alpha=0.3)
 
-    # Panel 5: Zoomed-in View
-    mid_idx = len(time) // 2
-    samples_in_half_sec = int((0.5 / (time[-1] - time[0])) * len(time))
-    start_idx = max(0, mid_idx - samples_in_half_sec // 2)
-    end_idx = min(len(time), start_idx + samples_in_half_sec)
-
-    axes[ax_idx].plot(time[start_idx:end_idx], filtered_signal[start_idx:end_idx],
-                      color='blue', linewidth=1)
-    if peaks is not None and len(peaks) > 0:
-        zoom_peaks = peaks[(peaks >= start_idx) & (peaks < end_idx)]
-        axes[ax_idx].plot(time[zoom_peaks], filtered_signal[zoom_peaks], "v",
-                          color='red', markersize=8, label='Peaks')
-    if troughs is not None and len(troughs) > 0:
-        zoom_troughs = troughs[(troughs >= start_idx) & (troughs < end_idx)]
-        axes[ax_idx].plot(time[zoom_troughs], filtered_signal[zoom_troughs], "^",
-                          color='green', markersize=8, label='Troughs')
-    if adaptive_thresh is not None:
-        axes[ax_idx].plot(time[start_idx:end_idx], adaptive_thresh[start_idx:end_idx],
-                          color='red', linewidth=1, linestyle='--', alpha=0.5,
-                          label='Local Threshold')
-        axes[ax_idx].plot(time[start_idx:end_idx], -adaptive_thresh[start_idx:end_idx],
-                          color='red', linewidth=1, linestyle='--', alpha=0.5)
-    axes[ax_idx].axhline(0, color='black', linewidth=0.8, linestyle='--')
-    axes[ax_idx].set_title("Zoomed View (0.5s window) — Red ▼ = peaks, Green ▲ = troughs")
-    axes[ax_idx].set_xlabel("Time (s)")
-    axes[ax_idx].set_ylabel("Filtered Current")
-    axes[ax_idx].legend(loc='upper right', fontsize=8)
-    axes[ax_idx].grid(True, alpha=0.3)
-
-    plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)
     plt.tight_layout()
     plt.savefig("ripple_analysis_adaptive.png", dpi=200, bbox_inches='tight')
-    plt.show()
+    # plt.show()

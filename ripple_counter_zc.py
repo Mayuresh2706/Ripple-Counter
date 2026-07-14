@@ -72,7 +72,7 @@ def count_ripples_hybrid(filtered_signal, fs=4000, dominant_freq=None, prominenc
     """
     # Enforce strict distance to avoid counting high-frequency noise
     if dominant_freq and dominant_freq > 0:
-        min_distance = int(fs / dominant_freq * 0.6)
+        min_distance = int(fs / dominant_freq * 0.4)
     else:
         min_distance = 4
     min_distance = max(min_distance, 2)
@@ -82,7 +82,7 @@ def count_ripples_hybrid(filtered_signal, fs=4000, dominant_freq=None, prominenc
         median = np.median(filtered_signal)
         mad = np.median(np.abs(filtered_signal - median))
         # Lowered multiplier from 2.5 to 1.2 to avoid missing small ripples
-        prominence = mad * 1.2
+        prominence = mad * 0.8
         prominence = max(prominence, 0.01)
 
     # Find peaks (local maxima)
@@ -176,4 +176,4 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
     plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)
     plt.tight_layout()
     plt.savefig("ripple_analysis_zc.png", dpi=200, bbox_inches='tight')
-    plt.show()
+    # plt.show()
