@@ -261,11 +261,11 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
             ax.plot(time[mask], envelope[mask], color='orange', linewidth=0.8,
                     label='Hilbert Envelope', alpha=0.5)
         
-        if adaptive_thresh is not None:
-            ax.plot(time[mask], adaptive_thresh[mask], color='red', linewidth=1.5,
-                    linestyle='--', label='Local Threshold (+)', alpha=0.8)
-            ax.plot(time[mask], -adaptive_thresh[mask], color='red', linewidth=1.5,
-                    linestyle='--', alpha=0.8)
+        # if adaptive_thresh is not None:
+        #     ax.plot(time[mask], adaptive_thresh[mask], color='red', linewidth=1.5,
+        #             linestyle='--', label='Local Threshold (+)', alpha=0.8)
+        #     ax.plot(time[mask], -adaptive_thresh[mask], color='red', linewidth=1.5,
+        #             linestyle='--', alpha=0.8)
 
         # Calculate a dynamic offset (10% of the max amplitude in this window) so arrows hover
         max_amp = np.max(np.abs(filtered_signal[mask])) if np.any(mask) else 1.0
