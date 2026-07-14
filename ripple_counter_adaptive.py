@@ -267,15 +267,21 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
             ax.plot(time[mask], -adaptive_thresh[mask], color='red', linewidth=1.5,
                     linestyle='--', alpha=0.8)
 
+        # Calculate a dynamic offset (10% of the max amplitude in this window) so arrows hover
+        max_amp = np.max(np.abs(filtered_signal[mask])) if np.any(mask) else 1.0
+        offset = max_amp * 0.15
+
         if peaks is not None and len(peaks) > 0:
             zoom_peaks = peaks[(time[peaks] >= start_t) & (time[peaks] <= end_t)]
-            ax.plot(time[zoom_peaks], filtered_signal[zoom_peaks], "v",
-                    color='red', markersize=7, alpha=0.9, label='Peaks' if i==0 else "")
+            # Plot hovering downward triangle above the peak
+            ax.plot(time[zoom_peaks], filtered_signal[zoom_peaks] + offset, "v",
+                    color='red', markersize=6, alpha=0.9, label='Peaks' if i==0 else "")
             
         if troughs is not None and len(troughs) > 0:
             zoom_troughs = troughs[(time[troughs] >= start_t) & (time[troughs] <= end_t)]
-            ax.plot(time[zoom_troughs], filtered_signal[zoom_troughs], "^",
-                    color='green', markersize=7, alpha=0.9, label='Troughs' if i==0 else "")
+            # Plot hovering upward triangle below the trough
+            ax.plot(time[zoom_troughs], filtered_signal[zoom_troughs] - offset, "^",
+                    color='green', markersize=6, alpha=0.9, label='Troughs' if i==0 else "")
             
         ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
         ax.set_xlim(start_t, end_t)
