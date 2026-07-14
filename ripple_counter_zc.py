@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, find_peaks
 from scipy.fft import rfft, rfftfreq
 import matplotlib.pyplot as plt
 
@@ -32,7 +32,6 @@ def analyze_frequency(signal, fs=4000, min_ripple_freq=20.0):
     max_freq_idx = np.searchsorted(xf, fs / 2 * 0.9)
 
     search_mag = yf[min_freq_idx:max_freq_idx]
-    search_freq = xf[min_freq_idx:max_freq_idx]
 
     if len(search_mag) == 0:
         return 0, xf, yf
@@ -58,36 +57,64 @@ def preprocess_signal(signal, fs=4000, lowcut=None, highcut=None, dominant_freq=
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, signal)
 
-def count_ripples_zero_crossing(filtered_signal):
-    """Counts ripples by counting zero crossings in the bandpass-filtered signal.
+def count_ripples_hybrid(filtered_signal, fs=4000, dominant_freq=None, prominence=None):
+    """Counts ripples using both peaks and troughs with smart pairing.
 
-    After bandpass filtering, the signal oscillates symmetrically around zero.
-    Each full ripple cycle crosses zero exactly twice (once going up, once going
-    down). So: ripple_count = zero_crossings / 2.
+    Counting logic:
+    - If a peak is followed by a trough (or vice versa), they form a pair
+      and count as 1 ripple (classic full cycle).
+    - If a peak is followed by another peak (or trough by trough), each one
+      is a standalone ripple (the signal crossed zero between them without
+      producing a detectable extremum on the other side).
 
-    This method has no amplitude threshold, so it cannot miss weak ripples that
-    a prominence-based detector would skip.
+    This catches ripples that stay entirely above or below the zero line,
+    which the pure zero-crossing method misses.
     """
-    # Detect sign changes between consecutive samples
-    # np.sign returns -1, 0, or 1. A sign change means the signal crossed zero.
-    signs = np.sign(filtered_signal)
+    # Enforce strict distance to avoid counting high-frequency noise
+    if dominant_freq and dominant_freq > 0:
+        min_distance = int(fs / dominant_freq * 0.6)
+    else:
+        min_distance = 4
+    min_distance = max(min_distance, 2)
 
-    # Treat exact zeros as positive to avoid ambiguity (e.g. signal lands exactly
-    # on zero between two negative dips — we still want to count that crossing)
-    signs[signs == 0] = 1
+    # Use MAD for robust prominence (immune to start/stop spikes)
+    if prominence is None:
+        median = np.median(filtered_signal)
+        mad = np.median(np.abs(filtered_signal - median))
+        prominence = mad * 2.5
+        prominence = max(prominence, 0.01)
 
-    # A zero crossing occurs wherever consecutive samples have different signs
-    crossings = np.where(np.diff(signs) != 0)[0]
+    # Find peaks (local maxima)
+    peaks, _ = find_peaks(filtered_signal, prominence=prominence, distance=min_distance)
 
-    num_crossings = len(crossings)
-    ripple_count = num_crossings // 2
+    # Find troughs (local minima) by finding peaks in the negated signal
+    troughs, _ = find_peaks(-filtered_signal, prominence=prominence, distance=min_distance)
 
-    return ripple_count, crossings
+    # Merge into a single list sorted by time, labeled as 'P' (peak) or 'T' (trough)
+    extrema = [(idx, 'P') for idx in peaks] + [(idx, 'T') for idx in troughs]
+    extrema.sort(key=lambda x: x[0])
+
+    # Apply the smart counting rule:
+    #   alternating (P-T or T-P) → pair = 1 ripple
+    #   same type   (P-P or T-T) → each is a standalone ripple
+    ripple_count = 0
+    i = 0
+    while i < len(extrema):
+        if i + 1 < len(extrema) and extrema[i][1] != extrema[i + 1][1]:
+            # Alternating pair: count as 1 ripple, skip both
+            ripple_count += 1
+            i += 2
+        else:
+            # Same type next, or last element: standalone ripple
+            ripple_count += 1
+            i += 1
+
+    return ripple_count, peaks, troughs, extrema
 
 def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
-                 crossings=None, ripple_count=0, dominant_freq=None,
-                 title="Motor Current Ripple Analysis (Zero-Crossing Method)"):
-    """4-panel plot: Raw, FFT, Filtered (Full) with crossings, Filtered (Zoomed)."""
+                 peaks=None, troughs=None, ripple_count=0, dominant_freq=None,
+                 title="Motor Current Ripple Analysis (Hybrid Peak+Trough Method)"):
+    """4-panel plot: Raw, FFT, Filtered (Full) with peaks & troughs, Filtered (Zoomed)."""
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(14, 12))
 
     # Panel 1: Raw Signal
@@ -106,14 +133,20 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
     ax2.grid(True, alpha=0.3)
     ax2.legend()
 
-    # Panel 3: Filtered Signal (Full) with zero-crossing markers
+    # Panel 3: Filtered Signal (Full) with peak and trough markers
+    num_peaks = len(peaks) if peaks is not None else 0
+    num_troughs = len(troughs) if troughs is not None else 0
     ax3.plot(time, filtered_signal, color='blue', linewidth=0.5)
-    if crossings is not None and len(crossings) > 0:
-        ax3.plot(time[crossings], filtered_signal[crossings], "|",
-                 color='red', markersize=6, alpha=0.5)
+    if peaks is not None and len(peaks) > 0:
+        ax3.plot(time[peaks], filtered_signal[peaks], "v",
+                 color='red', markersize=4, alpha=0.7, label=f'Peaks ({num_peaks})')
+    if troughs is not None and len(troughs) > 0:
+        ax3.plot(time[troughs], filtered_signal[troughs], "^",
+                 color='green', markersize=4, alpha=0.7, label=f'Troughs ({num_troughs})')
     ax3.axhline(0, color='black', linewidth=0.8, linestyle='--')
-    ax3.set_title(f"Filtered Signal (Full) — Zero Crossings: {len(crossings) if crossings is not None else 0}  |  Ripples: {ripple_count}")
+    ax3.set_title(f"Filtered Signal — Peaks: {num_peaks}  |  Troughs: {num_troughs}  |  Ripples: {ripple_count}")
     ax3.set_ylabel("Filtered Current")
+    ax3.legend(loc='upper right', fontsize=8)
     ax3.grid(True, alpha=0.3)
 
     # Panel 4: Zoomed-in View (0.5 seconds from the middle of the signal)
@@ -124,14 +157,19 @@ def plot_results(time, raw_signal, filtered_signal, fft_freqs, fft_mag,
 
     ax4.plot(time[start_idx:end_idx], filtered_signal[start_idx:end_idx],
              color='blue', linewidth=1)
-    if crossings is not None and len(crossings) > 0:
-        zoom_crossings = crossings[(crossings >= start_idx) & (crossings < end_idx)]
-        ax4.plot(time[zoom_crossings], filtered_signal[zoom_crossings], "|",
-                 color='red', markersize=10, markeredgewidth=1.5)
+    if peaks is not None and len(peaks) > 0:
+        zoom_peaks = peaks[(peaks >= start_idx) & (peaks < end_idx)]
+        ax4.plot(time[zoom_peaks], filtered_signal[zoom_peaks], "v",
+                 color='red', markersize=8, label='Peaks')
+    if troughs is not None and len(troughs) > 0:
+        zoom_troughs = troughs[(troughs >= start_idx) & (troughs < end_idx)]
+        ax4.plot(time[zoom_troughs], filtered_signal[zoom_troughs], "^",
+                 color='green', markersize=8, label='Troughs')
     ax4.axhline(0, color='black', linewidth=0.8, linestyle='--')
-    ax4.set_title("Zoomed View (0.5s window) — Red lines show zero crossings")
+    ax4.set_title("Zoomed View (0.5s window) — Red ▼ = peaks, Green ▲ = troughs")
     ax4.set_xlabel("Time (s)")
     ax4.set_ylabel("Filtered Current")
+    ax4.legend(loc='upper right', fontsize=8)
     ax4.grid(True, alpha=0.3)
 
     plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)

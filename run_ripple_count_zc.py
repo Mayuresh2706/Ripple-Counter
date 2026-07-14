@@ -2,12 +2,12 @@ import argparse
 import sys
 from ripple_counter_zc import (
     load_data, analyze_frequency,
-    preprocess_signal, count_ripples_zero_crossing,
+    preprocess_signal, count_ripples_hybrid,
     plot_results
 )
 
 def main():
-    parser = argparse.ArgumentParser(description="Motor Current Ripple Counter (Zero-Crossing Method)")
+    parser = argparse.ArgumentParser(description="Motor Current Ripple Counter (Hybrid Peak+Trough Method)")
     parser.add_argument("filepath", type=str, nargs="?",
                         default="002_DX1H_SLP_WithPWM.xlsx",
                         help="Path to the Excel file")
@@ -22,6 +22,8 @@ def main():
                         help="Manual lowcut freq (Hz). Auto-tuned if omitted.")
     parser.add_argument("--highcut", type=float, default=None,
                         help="Manual highcut freq (Hz). Auto-tuned if omitted.")
+    parser.add_argument("--prominence", type=float, default=None,
+                        help="Manual prominence threshold. Auto-tuned if omitted.")
 
     args = parser.parse_args()
 
@@ -43,20 +45,24 @@ def main():
                                      lowcut=args.lowcut, highcut=args.highcut,
                                      dominant_freq=dominant_freq)
 
-        # 4. Count ripples using zero-crossing method
-        ripple_count, crossings = count_ripples_zero_crossing(filtered)
+        # 4. Count ripples using hybrid peak+trough method
+        ripple_count, peaks, troughs, extrema = count_ripples_hybrid(
+            filtered, fs=args.fs,
+            dominant_freq=dominant_freq, prominence=args.prominence
+        )
 
         print(f"\n{'='*50}")
-        print(f"  RESULTS (Zero-Crossing Method)")
+        print(f"  RESULTS (Hybrid Peak+Trough Method)")
         print(f"{'='*50}")
         print(f"  Dominant Frequency : {dominant_freq:.1f} Hz")
-        print(f"  Zero Crossings     : {len(crossings)}")
-        print(f"  Total Ripples      : {ripple_count}  (crossings / 2)")
+        print(f"  Peaks Detected     : {len(peaks)}")
+        print(f"  Troughs Detected   : {len(troughs)}")
+        print(f"  Total Ripples      : {ripple_count}")
         print(f"{'='*50}")
 
         # 5. Plot
         plot_results(time, current, filtered, fft_freqs, fft_mag,
-                     crossings=crossings, ripple_count=ripple_count,
+                     peaks=peaks, troughs=troughs, ripple_count=ripple_count,
                      dominant_freq=dominant_freq)
 
     except Exception as e:
