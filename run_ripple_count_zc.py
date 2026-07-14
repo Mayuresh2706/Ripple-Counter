@@ -24,6 +24,8 @@ def main():
                         help="Manual highcut freq (Hz). Auto-tuned if omitted.")
     parser.add_argument("--prominence", type=float, default=None,
                         help="Manual prominence threshold. Auto-tuned if omitted.")
+    parser.add_argument("--domfreq", type=float, default=None,
+                        help="Manual dominant freq (Hz). Auto-tuned if omitted.")
 
     args = parser.parse_args()
 
@@ -38,7 +40,8 @@ def main():
                                   current_col=args.col, fs=args.fs)
 
         # 2. FFT — Find dominant frequency (high-passed above 20Hz first)
-        dominant_freq, fft_freqs, fft_mag = analyze_frequency(current, fs=args.fs, min_ripple_freq=20.0)
+        auto_dom_freq, fft_freqs, fft_mag = analyze_frequency(current, fs=args.fs, min_ripple_freq=20.0)
+        dominant_freq = args.domfreq if args.domfreq is not None else auto_dom_freq
 
         # 3. Bandpass filter the FULL signal
         filtered = preprocess_signal(current, fs=args.fs,

@@ -81,7 +81,8 @@ def count_ripples_hybrid(filtered_signal, fs=4000, dominant_freq=None, prominenc
     if prominence is None:
         median = np.median(filtered_signal)
         mad = np.median(np.abs(filtered_signal - median))
-        prominence = mad * 2.5
+        # Lowered multiplier from 2.5 to 1.2 to avoid missing small ripples
+        prominence = mad * 1.2
         prominence = max(prominence, 0.01)
 
     # Find peaks (local maxima)
