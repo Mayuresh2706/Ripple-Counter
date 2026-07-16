@@ -39,6 +39,9 @@ def load_k7_data(filepath, sheet_name='12_PWL_Antipinch', fs=4000):
     # Cell K7 → iloc[6:, 10]
     raw = df.iloc[6:, 10]
     data = pd.to_numeric(raw, errors='coerce').dropna().values.astype(float)
+    
+    # Zero out small noise values (absolute value < 0.1)
+    data = np.where(np.abs(data) < 0.1, 0.0, data)
 
     time_ms = np.arange(len(data)) / fs * 1000.0  # milliseconds
     print(f"  Loaded {len(data)} samples  |  Duration: {time_ms[-1]:.1f} ms")
